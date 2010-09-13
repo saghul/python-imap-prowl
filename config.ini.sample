@@ -1,0 +1,14 @@
+
+[general]
+api_key = 1234567890
+
+[AG Projects]
+; Username
+username = 
+; Password
+password = 
+; Server, in host:port form
+server = 
+; Application name for Prowl notification
+name = IMAP Notifier
+

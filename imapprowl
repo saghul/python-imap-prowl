@@ -1,0 +1,152 @@
+#!/usr/bin/env python
+
+import imaplib2
+import signal
+import sys
+
+from application import log
+from application.configuration import ConfigFile, ConfigSection, ConfigSetting
+from application.configuration.datatypes import NetworkAddress
+from application.process import process, ProcessError
+from optparse import OptionParser
+from threading import Event, Thread
+
+from prowlpy import Prowl, ProwlAuthError, ProwlError
+
+__version__ = '0.0.1'
+
+# Configuration
+class GeneralConfig(ConfigSection):
+    __section__ = 'general'
+    api_key = ''
+
+class IMAPServer(NetworkAddress):
+    default_port = 143
+
+class AccountConfig(ConfigSection):
+    name = ''
+    username = ''
+    password = ''
+    server = ConfigSetting(IMAPServer, value=None)
+
+def load_config(cfg_file):
+    config_file = ConfigFile(cfg_file)
+    GeneralConfig.read(config_file)
+
+    general_config = dict(GeneralConfig)
+    accounts_config = []
+
+    for section in (section for section in config_file.parser.sections() if section != 'general'):
+        AccountConfig.read(config_file, section)
+        accounts_config.append(dict(AccountConfig))
+        AccountConfig.reset()
+    return general_config, accounts_config
+
+
+# IMAP IDLE worker
+class Idler(object):
+    def __init__(self, account):
+        self.account = account
+        self.thread = Thread(target=self._idle)
+        try:
+            self.imap = imaplib2.IMAP4_SSL(account.get('server')[0], account.get('server')[1])
+            self.imap.login(account.get('username'), account.get('password'))
+            self.imap.select()
+        except imaplib2.error, e:
+            log.fatal(str(e))
+            sys.exit(1)
+        self.event = Event()
+        self.sync = False
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.event.set()
+        self.thread.join()
+        try:
+            self.imap.close()
+            self.imap.logout()
+        except imaplib2.error:
+            pass
+
+    def handle_idle(self, args):
+        if not self.event.isSet():
+            self.sync = True
+            self.event.set()
+
+    def _idle(self):
+        while True:
+            if self.event.isSet():
+                break
+            self.sync = False
+            # Do the actual idle call. This returns immediately, 
+            # since it's asynchronous.
+            try:
+                self.imap.idle(callback=self.handle_idle)
+            except imaplib2.error, e:
+                pass
+            # This waits until the event is set. The event is 
+            # set by the callback, when the server 'answers' 
+            # the idle call and the callback function gets 
+            # called.
+            self.event.wait()
+            if self.sync:
+                self.event.clear()
+                self.process_event()
+
+    def process_event(self):
+        log.msg('Email received, sending notification...')
+        prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
+
+
+prowl = None
+
+def quit(signal, frame):
+    log.msg("Quitting...")
+
+if __name__ == '__main__':
+    name = 'imap-notifier'
+    description = 'An IMAP notifier for Prowl'
+    version = __version__
+
+    parser = OptionParser(version="%%prog %s" % version)
+    parser.add_option("--no-fork", action="store_false", dest="fork", default=1, help="run the process in the foreground (for debugging)")
+    options, args = parser.parse_args()
+
+    process.runtime_directory = '/tmp'
+    process.signals.add_handler(signal.SIGINT, quit)
+    process.signals.add_handler(signal.SIGTERM, quit)
+    process.signals.add_handler(signal.SIGUSR1, quit)
+
+    if options.fork:
+        try:
+            pidfile = process.runtime_file('%s.pid' % name)
+            process.daemonize(pidfile)
+        except ProcessError, e:
+            log.fatal(str(e))
+            sys.exit(1)
+        log.start_syslog(name)
+
+    log.msg('IMAP notifier started!')
+
+    imap_idler_threads = []
+    general_cfg, accounts_cfg = load_config('config.ini')
+
+    try:
+        prowl = Prowl(general_cfg.get('api_key'))
+    except (ProwlAuthError, ProwlError), e:
+        log.fatal("Couldn't start Prowl: %s" % str(e))
+        sys.exit(1)
+
+    for account in accounts_cfg:
+        idler = Idler(account)
+        idler.start()
+        imap_idler_threads.append(idler)
+
+    signal.pause()
+
+    for idler in imap_idler_threads:
+        idler.stop()
+    log.msg('IMAP notifier ended.')
+
