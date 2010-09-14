@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import imaplib2
+import os
 import signal
 import sys
 
@@ -48,6 +49,7 @@ class Idler(object):
     def __init__(self, account):
         self.account = account
         self.thread = Thread(target=self._idle)
+        self.last_emails = set()
         try:
             self.imap = imaplib2.IMAP4_SSL(account.get('server')[0], account.get('server')[1])
             self.imap.login(account.get('username'), account.get('password'))
@@ -75,6 +77,10 @@ class Idler(object):
             self.sync = True
             self.event.set()
 
+    def _list_emails(self):
+        emails = self.imap.uid('search', None, 'ALL')[1]
+        return set(emails[0].split())
+
     def _idle(self):
         while True:
             if self.event.isSet():
@@ -82,6 +88,7 @@ class Idler(object):
             self.sync = False
             # Do the actual idle call. This returns immediately, 
             # since it's asynchronous.
+            self.last_emails = self._list_emails()
             try:
                 self.imap.idle(callback=self.handle_idle)
             except imaplib2.error, e:
@@ -96,8 +103,10 @@ class Idler(object):
                 self.process_event()
 
     def process_event(self):
-        log.msg('Email received, sending notification...')
-        prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
+        new_emails = self._list_emails()
+        if new_emails.difference(self.last_emails):
+            log.msg('Email received, sending notification...')
+            prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
 
 
 prowl = None
@@ -131,6 +140,9 @@ if __name__ == '__main__':
     log.msg('IMAP notifier started!')
 
     imap_idler_threads = []
+    if not os.path.isfile('config.ini'):
+        log.fatal("Config file missing")
+        sys.exit(1)
     general_cfg, accounts_cfg = load_config('config.ini')
 
     try:
