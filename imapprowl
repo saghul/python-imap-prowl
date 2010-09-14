@@ -2,6 +2,7 @@
 
 import imaplib2
 import os
+import re
 import signal
 import sys
 
@@ -111,7 +112,13 @@ class Idler(object):
                 try:
                     typ, data = self.imap.uid('fetch', email, '(BODY.PEEK[HEADER])')
                     headers_data = data[0][1]
-                    if self.account.get('skip_mailing_lists') and headers_data.find('List-') != -1:
+                    headers_data = re.sub('\r\n\t', '', headers_data)
+                    headers = {}
+                    for h in headers_data.split('\r\n'):
+                        if h:
+                            header, sep, value = h.partition(':')
+                            headers[header.lower()] = value.strip()
+                    if any(header.startswith('list-') for header in headers):
                         log.msg('Skipping email coming from mailing list')
                         return
                 except IndexError:
@@ -120,7 +127,7 @@ class Idler(object):
                     pass
                 else:
                     log.msg('Email received, sending notification...')
-                    #prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
+                    prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', headers.get('subject', "You've got new email!i"))
 
 
 prowl = None
