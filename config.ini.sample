@@ -9,6 +9,8 @@ username =
 password = 
 ; Server, in host:port form
 server = 
+; Should we skip emails coming from mailinglists?
+skip_mailing_lists = Yes
 ; Application name for Prowl notification
 name = IMAP Notifier
 

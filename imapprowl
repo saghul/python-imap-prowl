@@ -29,6 +29,7 @@ class AccountConfig(ConfigSection):
     username = ''
     password = ''
     server = ConfigSetting(IMAPServer, value=None)
+    skip_mailing_lists = True
 
 def load_config(cfg_file):
     config_file = ConfigFile(cfg_file)
@@ -104,9 +105,22 @@ class Idler(object):
 
     def process_event(self):
         new_emails = self._list_emails()
-        if new_emails.difference(self.last_emails):
-            log.msg('Email received, sending notification...')
-            prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
+        unseen_emails = new_emails.difference(self.last_emails)
+        if unseen_emails:
+            for email in unseen_emails:
+                try:
+                    typ, data = self.imap.uid('fetch', email, '(BODY.PEEK[HEADER])')
+                    headers_data = data[0][1]
+                    if self.account.get('skip_mailing_lists') and headers_data.find('List-') != -1:
+                        log.msg('Skipping email coming from mailing list')
+                        return
+                except IndexError:
+                    pass
+                except imaplib2.error:
+                    pass
+                else:
+                    log.msg('Email received, sending notification...')
+                    #prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', "You've got new email!")
 
 
 prowl = None
