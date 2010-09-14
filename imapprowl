@@ -32,6 +32,14 @@ class AccountConfig(ConfigSection):
     server = ConfigSetting(IMAPServer, value=None)
     skip_mailing_lists = True
 
+class AccountCfgObj(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+class GeneralCfgObj(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
 def load_config(cfg_file):
     config_file = ConfigFile(cfg_file)
     GeneralConfig.read(config_file)
@@ -41,9 +49,9 @@ def load_config(cfg_file):
 
     for section in (section for section in config_file.parser.sections() if section != 'general'):
         AccountConfig.read(config_file, section)
-        accounts_config.append(dict(AccountConfig))
+        accounts_config.append(AccountCfgObj(**dict(AccountConfig)))
         AccountConfig.reset()
-    return general_config, accounts_config
+    return GeneralCfgObj(**dict(general_config)), accounts_config
 
 
 # IMAP IDLE worker
@@ -53,8 +61,8 @@ class Idler(object):
         self.thread = Thread(target=self._idle)
         self.last_emails = set()
         try:
-            self.imap = imaplib2.IMAP4_SSL(account.get('server')[0], account.get('server')[1])
-            self.imap.login(account.get('username'), account.get('password'))
+            self.imap = imaplib2.IMAP4_SSL(account.server[0], account.server[1])
+            self.imap.login(account.username, account.password)
             self.imap.select()
         except imaplib2.error, e:
             log.fatal(str(e))
@@ -118,7 +126,7 @@ class Idler(object):
                         if h:
                             header, sep, value = h.partition(':')
                             headers[header.lower()] = value.strip()
-                    if any(header.startswith('list-') for header in headers):
+                    if self.account.skip_mailing_lists and any(header.startswith('list-') for header in headers):
                         log.msg('Skipping email coming from mailing list')
                         return
                 except IndexError:
@@ -127,7 +135,7 @@ class Idler(object):
                     pass
                 else:
                     log.msg('Email received, sending notification...')
-                    prowl.post(self.account.get('name', 'IMAP Notifier'), 'New Email', headers.get('subject', "You've got new email!i"))
+                    prowl.post(self.account.name or 'IMAP Notifier', 'New Email', headers.get('subject', "You've got new email!"))
 
 
 prowl = None
@@ -167,7 +175,7 @@ if __name__ == '__main__':
     general_cfg, accounts_cfg = load_config('config.ini')
 
     try:
-        prowl = Prowl(general_cfg.get('api_key'))
+        prowl = Prowl(general_cfg.api_key)
     except (ProwlAuthError, ProwlError), e:
         log.fatal("Couldn't start Prowl: %s" % str(e))
         sys.exit(1)
