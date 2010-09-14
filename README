@@ -1,0 +1,13 @@
+Pyehom IMAP Prowl
+=================
+
+Author: Saúl Ibarra Corretgé <saghul@gmail.com>
+
+
+Setup
+----
+ - Get a valid API key from the Prowl website: http://prowl.weks.net/
+ - Install the iPhone application
+ - Configure the Python library
+ - Get pushed!
+
